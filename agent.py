@@ -1,60 +1,127 @@
 import torch
-import pandas as pd
+import time
+from defense import SmoothingDefense
+from retrain import run_adversarial_retrain
 
 
 class RobustnessAgent:
-    def __init__(self, model, loader, device):
-        self.model = model
-        self.loader = loader
+
+    def __init__(self, model, device, train_loader=None, config=None):
+        self.model = model.to(device)
         self.device = device
+        self.train_loader = train_loader
+        self.config = config or {}
+
+        self.conf_threshold = self.config.get("conf_threshold", 0.7)
+        self.robust_target = self.config.get("robust_target", 70.0)
+        self.primary_eps = self.config.get("primary_eps", 0.1)
+
+        self.pgd_params = {
+            "alpha": self.config.get("pgd_alpha", 0.01),
+            "steps": int(self.config.get("pgd_steps", 10))
+        }
+
         self.history = []
+        print("Agentic AI initialized successfully.")
 
-    def evaluate_attack(self, attack, eps_values, alpha=0.01, iters=10):
-        from attack_eval import test_metrics
-        print(f"\n[Agent] Running {attack.upper()} attack sweep...")
-        for eps in eps_values:
-            acc, prec, rec, f1 = test_metrics(
-                self.model, self.loader,
-                attack_type=attack, epsilon=eps, alpha=alpha, iters=iters
+    def classify_image(self, image_tensor):
+        self.model.eval()
+        with torch.no_grad():
+            logits = self.model(image_tensor.to(self.device))
+            probs = torch.softmax(logits, dim=1)
+            conf, pred = probs.max(dim=1)
+        return int(pred.item()), float(conf.item()), probs.cpu()
+
+    def evaluate_robustness(self, image_tensor, defense=None):
+
+        image_tensor = image_tensor.clone().detach().to(self.device)
+        image_tensor.requires_grad = True
+
+        criterion = torch.nn.CrossEntropyLoss()
+        logits = self.model(image_tensor)
+        pred = logits.argmax(dim=1)
+
+        loss = criterion(logits, pred)
+        loss.backward()
+
+        adv_img = image_tensor + self.primary_eps * image_tensor.grad.sign()
+        adv_img = torch.clamp(adv_img, -1, 1)
+
+        with torch.no_grad():
+            if defense:
+                adv_img = defense(adv_img)
+            adv_logits = self.model(adv_img)
+            adv_pred = adv_logits.argmax(dim=1)
+
+        robust_acc = float((adv_pred == pred).float().mean().item() * 100)
+        return robust_acc
+
+    def handle_uploaded_image(self, image_tensor):
+        decisions = []
+        start_time = time.time()
+
+        pred, conf, _ = self.classify_image(image_tensor)
+        record = {
+            "pred_class": pred,
+            "confidence": conf,
+            "timestamp": start_time
+        }
+
+        print(f"Step 1: Classified as {pred} with confidence {conf:.2f}")
+
+        if conf < self.conf_threshold:
+            decision = "stop_low_confidence"
+            reason = f"Low confidence ({conf:.2f} < {self.conf_threshold}). Stopping analysis."
+            record.update({"decision": decision, "reason": reason})
+            decisions.append((decision, reason))
+            return decisions, record
+
+        defense = SmoothingDefense(kernel_size=3)
+        robust_acc = self.evaluate_robustness(image_tensor, defense)
+        record["robust_accuracy"] = robust_acc
+        print(f"Step 3: Evaluated robust accuracy = {robust_acc:.2f}%")
+
+        if robust_acc >= self.robust_target:
+            decision = "report_no_retrain"
+            reason = f"Robust accuracy ({robust_acc:.2f}%) ≥ target ({self.robust_target}%). No retraining needed."
+            record.update({"decision": decision, "reason": reason})
+            decisions.append((decision, reason))
+            return decisions, record
+
+        if self.train_loader is not None:
+            decision = "perform_retrain"
+            reason = f"Robust accuracy ({robust_acc:.2f}%) < target ({self.robust_target}%). Performing adversarial retraining."
+            print(f"Step 4: {reason}")
+            decisions.append((decision, reason))
+
+            retrain_cfg = self.config.get("retrain_cfg", {
+                "epochs": 1,
+                "lr": 0.001,
+                "eps": self.primary_eps,
+                "alpha": self.pgd_params["alpha"],
+                "steps": self.pgd_params["steps"],
+                "save_path": "models/retrained_model.pth"
+            })
+
+            save_path, retrain_metrics = run_adversarial_retrain(
+                self.model, self.train_loader, self.device, retrain_cfg, defense=defense
             )
-            print(f"  eps={eps:.2f} → acc={acc:.2f}%")
-            self.history.append([attack, eps, acc, prec, rec, f1])
 
-    def activate_defense_if_needed(self, threshold=80):
-        from attack_eval import defense_metrics
-        print("\n[Agent] Checking if defense is needed...")
-        recent_acc = self.history[-1][2]
-        if recent_acc < threshold:
-            print(
-                f"Accuracy dropped to {recent_acc:.2f}%, activating defense...")
-            attack = self.history[-1][0]
-            eps = self.history[-1][1]
-            acc, prec, rec, f1 = defense_metrics(
-                self.model, self.loader, attack_type=attack, epsilon=eps
-            )
-            print(f"Defense applied → acc={acc:.2f}%")
-            self.history.append([f"Defense-{attack}", eps, acc, prec, rec, f1])
+            self.model.load_state_dict(torch.load(
+                save_path, map_location=self.device))
+
+            new_robust_acc = self.evaluate_robustness(image_tensor, defense)
+            record.update({
+                "post_retrain_robust": new_robust_acc,
+                "retrain_metrics": retrain_metrics
+            })
+            decisions.append(
+                ("re_evaluate", f"New robust accuracy = {new_robust_acc:.2f}%"))
         else:
-            print("No defense needed, model is robust enough.")
+            decision = "recommend_retrain"
+            reason = f"Robust accuracy ({robust_acc:.2f}%) < target, but no training data available. Recommend retraining."
+            print(f"Step 4: {reason}")
+            record.update({"decision": decision, "reason": reason})
+            decisions.append((decision, reason))
 
-    def generate_report(self):
-        df = pd.DataFrame(self.history, columns=[
-            "Scenario", "Epsilon", "Accuracy (%)", "Precision", "Recall", "F1-score"
-        ])
-        print("\n=== AGENT REPORT ===")
-        print(df.to_string(index=False))
-        df.to_csv("agent_report.csv", index=False)
-
-    def decide_next_action(self):
-        # Analyze results
-        last_acc = self.history[-1][2]
-        if last_acc < 70:
-            print(
-                "🧠 Agent: Performance too low, switching to PGD defense training next...")
-            return "defense"
-        elif last_acc < 90:
-            print("🧠 Agent: Try reducing epsilon and re-testing...")
-            return "retune"
-        else:
-            print("🧠 Agent: Model is stable. Proceeding to report.")
-            return "report"
+        return decisions, record

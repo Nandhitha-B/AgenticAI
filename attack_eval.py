@@ -2,7 +2,7 @@ import torch
 import torchvision
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
-from agent import RobustnessAgent
+from eval_utils import fgsm_attack, pgd_attack, compute_metrics
 import torch.nn as nn
 import torch.nn.functional as F
 import pandas as pd
@@ -14,7 +14,7 @@ import numpy as np
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 with torch.serialization.safe_globals([torchvision.models.resnet.ResNet]):
-    model = torch.load("brain_tumor_full_model.pth",
+    model = torch.load("models/brain_tumor_full_model.pth",
                        map_location=device, weights_only=False)
 
 model = model.to(device)
@@ -143,7 +143,6 @@ def defense_metrics(model, loader, attack_type="fgsm", epsilon=0.03, alpha=0.003
     return acc, precision, recall, f1
 
 
-"""
 test_metrics(model, test_loader)
 
 # Attack- FGSM
@@ -159,7 +158,6 @@ defense_metrics(model, test_loader, attack_type="pgd",
 
 
 results = []
-
 
 acc, prec, rec, f1 = test_metrics(model, test_loader)
 results.append(["Clean", acc, prec, rec, f1])
@@ -190,24 +188,3 @@ df = pd.DataFrame(results, columns=[
 
 print("\nModel Performance Metrics:\n")
 print(df.to_string(index=False))
-"""
-
-# Create agent
-agent = RobustnessAgent(model, test_loader, device)
-
-# 1️⃣ Run FGSM sweep
-agent.evaluate_attack("fgsm", eps_values=[0.01, 0.05, 0.1, 0.2])
-
-# 2️⃣ Run PGD sweep
-agent.evaluate_attack(
-    "pgd", eps_values=[0.01, 0.03, 0.06], alpha=0.01, iters=10)
-
-action = agent.decide_next_action()
-if action == "defense":
-    agent.activate_defense_if_needed()
-elif action == "retune":
-    agent.evaluate_attack("fgsm", eps_values=[0.005, 0.01, 0.02])
-agent.generate_report()
-
-# 4️⃣ Generate report
-agent.generate_report()

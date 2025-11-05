@@ -1,0 +1,19 @@
+eps_list: [0.01, 0.03, 0.06, 0.1]
+primary_eps: 0.1
+conf_threshold: 0.6
+retrain_score_threshold: 80.0
+robust_threshold: 0.75
+attack_epsilon: 0.1
+use_defense: true
+defense_type: avgpool
+w_clean: 0.6
+w_robust: 0.4
+pgd_alpha: 0.01
+pgd_steps: 2
+retrain_cfg:
+  epochs: 2
+  lr: 0.001
+  eps: 0.03
+  alpha: 0.01
+  steps: 2
+  save_path: models/retrained_adv_model.pth
