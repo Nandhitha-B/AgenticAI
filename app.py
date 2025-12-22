@@ -63,29 +63,39 @@ def run_agentic_analysis(img_path):
     for i, (decision, reasoning) in enumerate(decisions, start=1):
         print(f"\nStep {i}: {decision.upper()}")
         print(f"Reasoning: {reasoning}")
+    
+    probe_results = record.get("probe_results")
 
-    robust_val = record.get("robust_accuracy")
-    final_val = record.get("post_retrain_robust")
+    if probe_results:
+        print("\nPROBE RESULTS SUMMARY")
+        print("-" * 80)
+        for p in probe_results:
+            print(
+                f"Epsilon {p['epsilon']}: Robust Accuracy = {p['robust_accuracy']:.2f}%"
+            )
 
-    print("\nROBUSTNESS EVALUATION SUMMARY")
-    print("-" * 80)
-    print(f"Robust Accuracy (Before Retraining): "
-          f"{robust_val:.2f}%" if robust_val else "Robust Accuracy (Before Retraining): N/A")
-    print(f"Robust Accuracy (After Retraining) : "
-          f"{final_val:.2f}%" if final_val else "Robust Accuracy (After Retraining) : N/A")
+
+    # robust_val = record.get("robust_accuracy")
+    # final_val = record.get("post_retrain_robust")
+
+    # print("\nROBUSTNESS EVALUATION SUMMARY")
+    # print("-" * 80)
+    # print(f"Robust Accuracy (Before Retraining): "
+    #       f"{robust_val:.2f}%" if robust_val else "Robust Accuracy (Before Retraining): N/A")
+    # print(f"Robust Accuracy (After Retraining) : "
+    #       f"{final_val:.2f}%" if final_val else "Robust Accuracy (After Retraining) : N/A")
 
     print("\n" + "=" * 80)
     print("AGENTIC AI ANALYSIS COMPLETE")
     print("=" * 80 + "\n")
 
     return {
-        "initial_class": pred_label,
-        "confidence": confidence,
-        "decisions": decisions,
-        "robust_before": robust_val,
-        "robust_after": final_val
-    }
-
+    "initial_class": pred_label,
+    "confidence": confidence,
+    "decisions": decisions,
+    "probe_results": record.get("probe_results"),
+    "probe_analysis": record.get("probe_analysis"),
+}
 
 if __name__ == "__main__":
     img_path = "uploads/uploaded_image.png"
@@ -111,13 +121,25 @@ def generate_report_docx(results, output_path="Agentic_AI_Robustness_Report.docx
         document.add_paragraph(f"Step {i}: {decision}", style='List Number')
         document.add_paragraph(f"Reasoning: {reasoning}")
 
-    document.add_heading("3. Robustness Evaluation Summary", level=2)
-    before = (
-        f"{results['robust_before']:.2f}%" if results['robust_before'] else "N/A")
-    after = (
-        f"{results['robust_after']:.2f}%" if results['robust_after'] else "N/A")
-    document.add_paragraph(f"Robust Accuracy (Before Retraining): {before}")
-    document.add_paragraph(f"Robust Accuracy (After Retraining): {after}")
+    document.add_heading("3. Probe-Based Robustness Evaluation", level=2)
+
+    probe_results = results.get("probe_results")
+    probe_analysis = results.get("probe_analysis")
+
+    if probe_results:
+        for p in probe_results:
+            document.add_paragraph(
+                f"Epsilon {p['epsilon']}: Robust Accuracy = {p['robust_accuracy']:.2f}%"
+            )
+
+    if probe_analysis:
+        document.add_paragraph(
+            f"Probe failures: {probe_analysis['failures']} / {len(probe_results)}"
+        )
+        document.add_paragraph(
+            f"Retraining triggered: {probe_analysis['needs_retrain']}"
+        )
+    
 
     document.add_paragraph(
         "\nReport generated automatically by Agentic AI System.")

@@ -61,67 +61,113 @@ class RobustnessAgent:
         start_time = time.time()
 
         pred, conf, _ = self.classify_image(image_tensor)
+
         record = {
             "pred_class": pred,
             "confidence": conf,
             "timestamp": start_time
         }
 
-        print(f"Step 1: Classified as {pred} with confidence {conf:.2f}")
-
+        # --- Confidence gate (KEEP THIS) ---
         if conf < self.conf_threshold:
-            decision = "stop_low_confidence"
-            reason = f"Low confidence ({conf:.2f} < {self.conf_threshold}). Stopping analysis."
-            record.update({"decision": decision, "reason": reason})
-            decisions.append((decision, reason))
+            decisions.append((
+                "stop_low_confidence",
+                f"Low confidence ({conf:.2f}). Skipping robustness probes."
+            ))
+            record["decision"] = "stop_low_confidence"
             return decisions, record
 
-        defense = SmoothingDefense(kernel_size=3)
-        robust_acc = self.evaluate_robustness(image_tensor, defense)
-        record["robust_accuracy"] = robust_acc
-        print(f"Step 3: Evaluated robust accuracy = {robust_acc:.2f}%")
+        # --- Defense selection ---
+        defense = SmoothingDefense(kernel_size=3) if self.config["use_defense"] else None
 
-        if robust_acc >= self.robust_target:
-            decision = "report_no_retrain"
-            reason = f"Robust accuracy ({robust_acc:.2f}%) ≥ target ({self.robust_target}%). No retraining needed."
-            record.update({"decision": decision, "reason": reason})
-            decisions.append((decision, reason))
+        # --- PROBE MECHANISM ---
+        clean_pred, clean_conf, probe_results = self.run_probes(
+            image_tensor, defense)
+
+        probe_analysis = self.analyze_probes(probe_results)
+
+        record["probe_results"] = probe_results
+        record["probe_analysis"] = probe_analysis
+
+        # --- AGENT DECISION ---
+        if not probe_analysis["needs_retrain"]:
+            decisions.append((
+                "no_retrain",
+                "Probes show stable behavior across perturbations."
+            ))
+            record["decision"] = "no_retrain"
             return decisions, record
 
+        # --- RETRAIN IF NEEDED ---
         if self.train_loader is not None:
-            decision = "perform_retrain"
-            reason = f"Robust accuracy ({robust_acc:.2f}%) < target ({self.robust_target}%). Performing adversarial retraining."
-            print(f"Step 4: {reason}")
-            decisions.append((decision, reason))
+            decisions.append((
+                "perform_retrain",
+                "Probe failures indicate model instability. Retraining triggered."
+            ))
 
-            retrain_cfg = self.config.get("retrain_cfg", {
-                "epochs": 1,
-                "lr": 0.001,
-                "eps": self.primary_eps,
-                "alpha": self.pgd_params["alpha"],
-                "steps": self.pgd_params["steps"],
-                "save_path": "models/retrained_model.pth"
-            })
+            retrain_cfg = self.config["retrain_cfg"]
 
             save_path, retrain_metrics = run_adversarial_retrain(
-                self.model, self.train_loader, self.device, retrain_cfg, defense=defense
+                self.model,
+                self.train_loader,
+                self.device,
+                retrain_cfg,
+                defense=defense
             )
 
-            self.model.load_state_dict(torch.load(
-                save_path, map_location=self.device))
+            self.model.load_state_dict(
+                torch.load(save_path, map_location=self.device)
+            )
 
-            new_robust_acc = self.evaluate_robustness(image_tensor, defense)
-            record.update({
-                "post_retrain_robust": new_robust_acc,
-                "retrain_metrics": retrain_metrics
-            })
-            decisions.append(
-                ("re_evaluate", f"New robust accuracy = {new_robust_acc:.2f}%"))
+            record["retrain_metrics"] = retrain_metrics
+            record["decision"] = "perform_retrain"
+
         else:
-            decision = "recommend_retrain"
-            reason = f"Robust accuracy ({robust_acc:.2f}%) < target, but no training data available. Recommend retraining."
-            print(f"Step 4: {reason}")
-            record.update({"decision": decision, "reason": reason})
-            decisions.append((decision, reason))
+            decisions.append((
+                "recommend_retrain",
+                "Probe failures detected, but no training data available."
+            ))
+            record["decision"] = "recommend_retrain"
 
         return decisions, record
+
+    def run_probes(self, image_tensor, defense):
+        probe_results = []
+
+        self.model.eval()
+
+        # Clean prediction (baseline)
+        clean_pred, clean_conf, _ = self.classify_image(image_tensor)
+
+        for eps in self.config["eps_list"]:
+            self.primary_eps = eps
+
+            adv_robust = self.evaluate_robustness(
+                image_tensor, defense)
+
+            probe_results.append({
+                "epsilon": eps,
+                "robust_accuracy": adv_robust
+            })
+
+        return clean_pred, clean_conf, probe_results
+    
+    def analyze_probes(self, probe_results):
+        """
+        Converts probe outcomes into a retraining signal
+        """
+        failures = 0
+
+        for probe in probe_results:
+            if probe["robust_accuracy"] < 50.0:
+                failures += 1
+
+        failure_ratio = failures / len(probe_results)
+
+        return {
+            "failures": failures,
+            "failure_ratio": failure_ratio,
+            "needs_retrain": failure_ratio >= 0.5
+        }
+
+
