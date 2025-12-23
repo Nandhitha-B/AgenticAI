@@ -46,9 +46,14 @@ def run_agentic_analysis(img_path):
         pred_class = torch.argmax(probs, dim=1).item()
         confidence = probs[0][pred_class].item()
 
-    class_names = ["meningioma", "glioma", "pituitary"]
-    pred_label = class_names[pred_class] if pred_class < len(
-        class_names) else "Unknown"
+    # Use dataset class ordering (ImageFolder) so indices map correctly
+    class_names = train_dataset.classes
+    pred_label = class_names[pred_class] if pred_class < len(class_names) else "Unknown"
+
+    # Add confidence threshold check
+    if confidence < 0.95:  # Lower threshold to catch more uncertain predictions
+        pred_label = "Uncertain - Retrain Recommended"
+        print(f"Low confidence ({confidence * 100:.2f}%) - Model may be misclassifying.")
 
     print("INITIAL CLASSIFICATION")
     print("-" * 80)

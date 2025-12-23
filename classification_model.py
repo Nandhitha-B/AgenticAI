@@ -8,6 +8,8 @@ train_transforms = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.RandomHorizontalFlip(),
     transforms.RandomRotation(10),
+    transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+    transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),
     transforms.ToTensor(),
     transforms.Normalize([0.5], [0.5])
 ])
@@ -21,7 +23,15 @@ train_dataset = datasets.ImageFolder(
     "dataset/train", transform=train_transforms)
 test_dataset = datasets.ImageFolder("dataset/test", transform=test_transforms)
 
-train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+from torch.utils.data import DataLoader, WeightedRandomSampler
+
+# Calculate class weights for imbalanced data
+class_counts = [len([f for f in train_dataset.samples if f[1] == i]) for i in range(len(train_dataset.classes))]
+class_weights = [1.0 / count for count in class_counts]
+sample_weights = [class_weights[label] for _, label in train_dataset.samples]
+sampler = WeightedRandomSampler(sample_weights, num_samples=len(sample_weights), replacement=True)
+
+train_loader = DataLoader(train_dataset, batch_size=32, sampler=sampler)
 test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -32,7 +42,7 @@ model = model.to(device)
 
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=1e-4)
-num_epochs = 3
+num_epochs = 10  # Increase epochs for better training
 
 for epoch in range(num_epochs):
     model.train()
