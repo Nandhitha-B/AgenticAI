@@ -2,6 +2,7 @@ import torch
 import time
 from defense import SmoothingDefense
 from retrain import run_adversarial_retrain
+from attacks.cw_attack import CarliniWagnerAttack
 
 
 class RobustnessAgent:
@@ -20,6 +21,15 @@ class RobustnessAgent:
             "alpha": self.config.get("pgd_alpha", 0.01),
             "steps": int(self.config.get("pgd_steps", 10))
         }
+        self.cw_attack = CarliniWagnerAttack(
+    model=self.model,
+    device=self.device,
+    c=self.config["cw"]["c"],
+    kappa=self.config["cw"]["kappa"],
+    steps=self.config["cw"]["steps"],
+    lr=self.config["cw"]["lr"]
+)
+
 
         self.history = []
         print("Agentic AI initialized successfully.")
@@ -31,6 +41,21 @@ class RobustnessAgent:
             probs = torch.softmax(logits, dim=1)
             conf, pred = probs.max(dim=1)
         return int(pred.item()), float(conf.item()), probs.cpu()
+    
+    def cw_probe(self, image_tensor, label, defense=None):
+        self.model.eval()
+
+        adv_img = self.cw_attack.attack(image_tensor, label)
+
+        if defense:
+            adv_img = defense(adv_img)
+
+        with torch.no_grad():
+            logits = self.model(adv_img)
+            adv_pred = logits.argmax(dim=1)
+
+        return int(adv_pred.item()) == int(label.item())
+
 
     def evaluate_robustness(self, image_tensor, defense=None):
 
@@ -136,9 +161,10 @@ class RobustnessAgent:
 
         self.model.eval()
 
-        # Clean prediction (baseline)
         clean_pred, clean_conf, _ = self.classify_image(image_tensor)
+        label = torch.tensor([clean_pred], device=self.device)
 
+        # --- FGSM-style epsilon probes ---
         for eps in self.config["eps_list"]:
             self.primary_eps = eps
 
@@ -146,12 +172,22 @@ class RobustnessAgent:
                 image_tensor, defense)
 
             probe_results.append({
+                "type": "fgsm",
                 "epsilon": eps,
                 "robust_accuracy": adv_robust
             })
 
+        # --- C&W PROBE (NEW) ---
+        cw_success = self.cw_probe(image_tensor, label, defense)
+
+        probe_results.append({
+            "type": "cw",
+            "epsilon": "adaptive",
+            "robust_accuracy": 100.0 if cw_success else 0.0
+        })
+
         return clean_pred, clean_conf, probe_results
-    
+
     def analyze_probes(self, probe_results):
         """
         Converts probe outcomes into a retraining signal

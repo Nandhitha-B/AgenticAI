@@ -17,3 +17,8 @@ retrain_cfg:
   alpha: 0.01
   steps: 2
   save_path: models/retrained_adv_model.pth
+cw:
+  c: 0.001
+  kappa: 0
+  steps: 500
+  lr: 0.01
