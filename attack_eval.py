@@ -2,7 +2,7 @@ import torch
 import torchvision
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
-from eval_utils import fgsm_attack, pgd_attack, compute_metrics
+from eval_utils import fgsm_attack, pgd_attack, bim_attack, compute_metrics
 import torch.nn as nn
 import torch.nn.functional as F
 import pandas as pd
@@ -47,6 +47,8 @@ def test_metrics(model, loader, attack_type=None, epsilon=0.03, alpha=0.01, iter
             images = fgsm_attack(model, images, labels, epsilon)
         elif attack_type == "pgd":
             images = pgd_attack(model, images, labels, epsilon, alpha, iters)
+        elif attack_type == "bim":
+            images = bim_attack(model, images, labels, epsilon, alpha, iters)
 
         outputs = model(images)
         _, preds = torch.max(outputs, 1)
@@ -124,6 +126,8 @@ def defense_metrics(model, loader, attack_type="fgsm", epsilon=0.03, alpha=0.003
         elif attack_type == "pgd":
             adv_images = pgd_attack(
                 model, images, labels, epsilon, alpha, iters)
+        elif attack_type == "bim":
+            adv_images = bim_attack(model, images, labels, epsilon, alpha, iters)
 
         adv_images = torch.clamp(adv_images, 0, 1)
         adv_images = F.avg_pool2d(
@@ -173,6 +177,11 @@ acc, prec, rec, f1 = test_metrics(
 results.append(["PGD", acc, prec, rec, f1])
 
 
+acc, prec, rec, f1 = test_metrics(
+    model, test_loader, attack_type="bim", epsilon=0.03, alpha=0.03/4, iters=4)
+results.append(["BIM", acc, prec, rec, f1])
+
+
 acc, prec, rec, f1 = defense_metrics(
     model, test_loader, attack_type="fgsm", epsilon=0.1)
 results.append(["Defense (FGSM)", acc, prec, rec, f1])
@@ -181,6 +190,11 @@ results.append(["Defense (FGSM)", acc, prec, rec, f1])
 acc, prec, rec, f1 = defense_metrics(
     model, test_loader, attack_type="pgd", epsilon=0.03, alpha=0.03/4, iters=4)
 results.append(["Defense (PGD)", acc, prec, rec, f1])
+
+
+acc, prec, rec, f1 = defense_metrics(
+    model, test_loader, attack_type="bim", epsilon=0.03, alpha=0.03/4, iters=4)
+results.append(["Defense (BIM)", acc, prec, rec, f1])
 
 
 df = pd.DataFrame(results, columns=[

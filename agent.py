@@ -21,6 +21,12 @@ class RobustnessAgent:
             "alpha": self.config.get("pgd_alpha", 0.01),
             "steps": int(self.config.get("pgd_steps", 10))
         }
+
+        self.bim_params = {
+            "alpha": self.config.get("bim_alpha", 0.01),
+            "steps": int(self.config.get("bim_steps", 10))
+        }
+
         self.cw_attack = CarliniWagnerAttack(
     model=self.model,
     device=self.device,
@@ -48,6 +54,31 @@ class RobustnessAgent:
         adv_img = self.cw_attack.attack(image_tensor, label)
 
         if defense:
+            adv_img = defense(adv_img)
+
+        with torch.no_grad():
+            logits = self.model(adv_img)
+            adv_pred = logits.argmax(dim=1)
+
+        return int(adv_pred.item()) == int(label.item())
+
+    def bim_probe(self, image_tensor, label, defense=None):
+        """BIM (Basic Iterative Method) attack probe."""
+        from eval_utils import bim_attack
+        self.model.eval()
+
+        # Apply BIM attack
+        adv_img = bim_attack(
+            self.model,
+            image_tensor,
+            label,
+            eps=self.primary_eps,
+            alpha=self.bim_params["alpha"],
+            steps=self.bim_params["steps"],
+            defense=defense
+        )
+
+        if defense and defense is None:  # defense is applied in bim_attack if provided
             adv_img = defense(adv_img)
 
         with torch.no_grad():
@@ -184,6 +215,15 @@ class RobustnessAgent:
             "type": "cw",
             "epsilon": "adaptive",
             "robust_accuracy": 100.0 if cw_success else 0.0
+        })
+
+        # --- BIM PROBE (NEW) ---
+        bim_success = self.bim_probe(image_tensor, label, defense)
+
+        probe_results.append({
+            "type": "bim",
+            "epsilon": self.primary_eps,
+            "robust_accuracy": 100.0 if bim_success else 0.0
         })
 
         return clean_pred, clean_conf, probe_results

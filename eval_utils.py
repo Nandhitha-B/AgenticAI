@@ -66,6 +66,37 @@ def pgd_attack(model, images, labels, eps=0.03, alpha=0.01, steps=40, defense=No
     return images
 
 
+def bim_attack(model, images, labels, eps=0.03, alpha=0.01, steps=40, defense=None):
+    """Basic Iterative Method - iterative version of FGSM without random start.
+    
+    Note: eps is applied in the normalized image space [-1, 1]
+    For unnormalized [0, 1] images, multiply eps by 2 (since range is 2x larger)
+    """
+    device = next(model.parameters()).device
+    images = images.clone().detach().to(device)
+    labels = labels.to(device)
+    ori_images = images.clone().detach()
+
+    for _ in range(steps):
+        images.requires_grad = True
+        attacked_model = _make_attacked_model(model, defense)
+        outputs = attacked_model(images)
+        loss = nn.CrossEntropyLoss()(outputs, labels)
+        attacked_model.zero_grad()
+        loss.backward()
+        
+        # Apply perturbation in the normalized space
+        adv_images = images + alpha * images.grad.sign()
+        
+        # Clip to epsilon ball (in normalized space, typically [-1, 1])
+        eta = torch.clamp(adv_images - ori_images, min=-eps, max=eps)
+        
+        # Clamp to valid image range (handles both normalized [-1,1] and unnormalized [0,1])
+        images = torch.clamp(ori_images + eta, -1.0, 1.0).detach()
+
+    return images
+
+
 def evaluate_robust_accuracy(model, dataloader, eps=0.03, attack="pgd", defense=None, **attack_kwargs):
 
     model.eval()
