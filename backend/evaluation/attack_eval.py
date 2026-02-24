@@ -16,7 +16,7 @@ from evaluation.metrics import (
     compute_robustness_gap
 )
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+device = "cpu"
 
 
 # -----------------------------
@@ -41,6 +41,7 @@ def evaluate_model(model, loader, attack_name=None, attack_params=None):
     all_probs = []
 
     for images, labels in loader:
+        print("Processing batch...")
         images = images.to(device)
         labels = labels.to(device)
 
@@ -55,7 +56,11 @@ def evaluate_model(model, loader, attack_name=None, attack_params=None):
                 **attack_params
             )
 
-        outputs = model(images)
+        if attack_name is None:
+            with torch.no_grad():
+                outputs = model(images)
+        else:
+            outputs = model(images)
         probs = F.softmax(outputs, dim=1)
         _, preds = torch.max(outputs, 1)
 
@@ -74,7 +79,7 @@ def evaluate_model(model, loader, attack_name=None, attack_params=None):
 # Full Robustness Evaluation
 # -----------------------------
 def run_full_evaluation(model, test_loader):
-
+    print("\nRunning CLEAN evaluation...")
     results = {}
     attack_accuracies = {}
     attack_asr = {}
@@ -94,17 +99,17 @@ def run_full_evaluation(model, test_loader):
     # ATTACK SETTINGS
     # -----------------------------
     attack_configs = {
-        "fgsm": {"epsilon": 0.03},
-        "pgd": {"epsilon": 0.0025, "alpha": 0.001, "iters": 4},
-        "bim": {"epsilon": 0.0005, "alpha": 0.001, "iters": 4},
-        "cw": {"c": 1e-4, "kappa": 0, "iters": 5, "lr": 0.01}
+        "fgsm": {"epsilon": 0.01},
+        "pgd": {"epsilon": 0.0025, "alpha": 0.001, "iters": 3},
+        "bim": {"epsilon": 0.0005, "alpha": 0.001, "iters": 3},
+        "cw": {"c": 1e-4, "kappa": 0, "iters": 3, "lr": 0.01}
     }
 
     # -----------------------------
     # RUN EACH ATTACK
     # -----------------------------
     for attack_name, params in attack_configs.items():
-
+        print(f"\nRunning {attack_name.upper()} attack...")
         y_true_adv, y_pred_adv, probs_adv = evaluate_model(
             model,
             test_loader,

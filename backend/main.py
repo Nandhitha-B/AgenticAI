@@ -1,5 +1,6 @@
 # main.py
 
+from torch.utils.data import Subset
 import torch
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
@@ -29,9 +30,16 @@ test_transforms = transforms.Compose([
 
 test_dataset = datasets.ImageFolder(
     "backend/dataset/test", transform=test_transforms)
-test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
 
 
+subset_size = 200  # small subset
+test_subset = Subset(test_dataset, range(subset_size))
+
+test_loader = DataLoader(
+    test_subset,
+    batch_size=8,
+    shuffle=False
+)
 # -----------------------------
 # Run Evaluation
 # -----------------------------
