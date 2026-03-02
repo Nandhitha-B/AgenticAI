@@ -1,0 +1,11 @@
+# Python virtual environment
+venv/
+
+# Compiled Python files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Other system files you might want to ignore
+*.swp
