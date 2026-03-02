@@ -2,7 +2,7 @@ import torch
 from torch import optim
 import torch.nn as nn
 from eval_utils import pgd_attack
-
+from defense import trades_loss
 
 def train_one_epoch_adv_defense_aware(model, train_loader, device, optimizer, eps=0.03, alpha=0.01, steps=4, defense=None):
     model.train()
@@ -11,11 +11,18 @@ def train_one_epoch_adv_defense_aware(model, train_loader, device, optimizer, ep
     running_loss = 0.0
     for images, labels in train_loader:
         images, labels = images.to(device), labels.to(device)
-        adv_images = pgd_attack(model, images, labels, eps=eps,
-                                alpha=alpha, steps=steps, defense=defense, random_start=True)
         optimizer.zero_grad()
-        logits = model(adv_images)
-        loss = loss_fn(logits, labels)
+
+        loss = trades_loss(
+            model,
+            images,
+            labels,
+            beta=6.0,
+            epsilon=eps,
+            alpha=alpha,
+            steps=steps
+        )
+
         loss.backward()
         optimizer.step()
         running_loss += loss.item() * images.size(0)
