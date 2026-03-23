@@ -1,11 +1,13 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+import torch.optim as optim
 
 # ------------------------------
 # SIMPLE SMOOTHING DEFENSE
 # ------------------------------
+
+
 class SmoothingDefense(nn.Module):
     def __init__(self, kernel_size=3, stride=1, padding=1):
         super().__init__()
@@ -105,3 +107,42 @@ class TRADESDefense:
             self.alpha,
             self.steps
         )
+
+
+# ------------------------------
+# TRADES TRAINING LOOP
+# ------------------------------
+
+
+def train_with_trades(model, train_loader, epochs=3, lr=1e-4):
+
+    model.train()
+
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+
+    for epoch in range(epochs):
+
+        total_loss = 0
+
+        for images, labels in train_loader:
+
+            images = images.to(device)
+            labels = labels.to(device)
+
+            loss = trades_loss(
+                model,
+                images,
+                labels
+            )
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item()
+
+        avg_loss = total_loss / len(train_loader)
+
+        print(f"TRADES Epoch {epoch+1}/{epochs} - Loss: {avg_loss:.4f}")
+
+    return model

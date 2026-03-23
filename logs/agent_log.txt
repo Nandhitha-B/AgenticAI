@@ -1,0 +1,13 @@
+
+2026-03-23 17:30:13.024453
+
+2026-03-23 17:36:13.651549
+
+Clean Accuracy: 99.50
+Worst-case Accuracy: 28.00
+Robustness Gap: 71.50
+
+Threshold exceeded → retraining triggered
+
+2026-03-23 17:50:37.603544
+New model saved: model_v2.pth

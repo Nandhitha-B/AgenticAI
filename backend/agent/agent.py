@@ -1,249 +1,229 @@
-import torch
+import os
 import time
-from defense import SmoothingDefense
-from retrain import run_adversarial_retrain
-from attacks.cw_attack import CarliniWagnerAttack
+import torch
+from datetime import datetime
+
+from evaluation.attack_eval import run_full_evaluation
+from defense.defense import train_with_trades
 
 
 class RobustnessAgent:
 
-    def __init__(self, model, device, train_loader=None, config=None):
-        self.model = model.to(device)
-        self.device = device
+    def __init__(
+        self,
+        train_loader,
+        test_loader,
+        models_dir="models",
+        log_file="logs/agent_log.txt",
+        gap_threshold=25,
+        device="cpu"
+    ):
+
         self.train_loader = train_loader
-        self.config = config or {}
+        self.test_loader = test_loader
+        self.models_dir = models_dir
+        self.log_file = log_file
+        self.gap_threshold = gap_threshold
+        self.device = device
 
-        self.conf_threshold = self.config.get("conf_threshold", 0.7)
-        self.robust_target = self.config.get("robust_target", 70.0)
-        self.primary_eps = self.config.get("primary_eps", 0.1)
+        self.model = None
 
-        self.pgd_params = {
-            "alpha": self.config.get("pgd_alpha", 0.01),
-            "steps": int(self.config.get("pgd_steps", 10))
-        }
+        os.makedirs(models_dir, exist_ok=True)
+        os.makedirs("logs", exist_ok=True)
 
-        self.bim_params = {
-            "alpha": self.config.get("bim_alpha", 0.01),
-            "steps": int(self.config.get("bim_steps", 10))
-        }
+    # ------------------------------
+    # GET NEXT MODEL VERSION
+    # ------------------------------
+    def get_next_model_version(self):
 
-        self.cw_attack = CarliniWagnerAttack(
-    model=self.model,
-    device=self.device,
-    c=self.config["cw"]["c"],
-    kappa=self.config["cw"]["kappa"],
-    steps=self.config["cw"]["steps"],
-    lr=self.config["cw"]["lr"]
-)
+        existing = [
+            f for f in os.listdir(self.models_dir)
+            if f.startswith("model_v") and f.endswith(".pth")
+        ]
 
+        if len(existing) == 0:
+            return "model_v1.pth"
 
-        self.history = []
-        print("Agentic AI initialized successfully.")
+        versions = [
+            int(f.split("_v")[1].split(".")[0])
+            for f in existing
+        ]
 
-    def classify_image(self, image_tensor):
-        self.model.eval()
-        with torch.no_grad():
-            logits = self.model(image_tensor.to(self.device))
-            probs = torch.softmax(logits, dim=1)
-            conf, pred = probs.max(dim=1)
-        return int(pred.item()), float(conf.item()), probs.cpu()
-    
-    def cw_probe(self, image_tensor, label, defense=None):
-        self.model.eval()
+        next_version = max(versions) + 1
 
-        adv_img = self.cw_attack.attack(image_tensor, label)
+        return f"model_v{next_version}.pth"
 
-        if defense:
-            adv_img = defense(adv_img)
+    # ------------------------------
+    # LOAD LATEST MODEL
+    # ------------------------------
+    def load_latest_model(self):
 
-        with torch.no_grad():
-            logits = self.model(adv_img)
-            adv_pred = logits.argmax(dim=1)
+        models = [
+            f for f in os.listdir(self.models_dir)
+            if f.startswith("model_v") and f.endswith(".pth")
+        ]
 
-        return int(adv_pred.item()) == int(label.item())
+        if len(models) == 0:
+            raise Exception("No model found in models directory.")
 
-    def bim_probe(self, image_tensor, label, defense=None):
-        """BIM (Basic Iterative Method) attack probe."""
-        from eval_utils import bim_attack
-        self.model.eval()
+        versions = [
+            int(m.split("_v")[1].split(".")[0])
+            for m in models
+        ]
 
-        # Apply BIM attack
-        adv_img = bim_attack(
-            self.model,
-            image_tensor,
-            label,
-            eps=self.primary_eps,
-            alpha=self.bim_params["alpha"],
-            steps=self.bim_params["steps"],
-            defense=defense
+        latest_version = max(versions)
+
+        model_path = os.path.join(
+            self.models_dir,
+            f"model_v{latest_version}.pth"
         )
 
-        if defense and defense is None:  # defense is applied in bim_attack if provided
-            adv_img = defense(adv_img)
+        print(f"\nLoading latest model: model_v{latest_version}.pth")
 
-        with torch.no_grad():
-            logits = self.model(adv_img)
-            adv_pred = logits.argmax(dim=1)
+        model = torch.load(
+            model_path,
+            map_location=self.device,
+            weights_only=False
+        )
 
-        return int(adv_pred.item()) == int(label.item())
+        model.to(self.device)
+        model.eval()
 
+        return model
 
-    def evaluate_robustness(self, image_tensor, defense=None):
+    # ------------------------------
+    # VULNERABILITY ANALYSIS
+    # ------------------------------
+    def analyze_vulnerability(self, metrics):
 
-        image_tensor = image_tensor.clone().detach().to(self.device)
-        image_tensor.requires_grad = True
-
-        criterion = torch.nn.CrossEntropyLoss()
-        logits = self.model(image_tensor)
-        pred = logits.argmax(dim=1)
-
-        loss = criterion(logits, pred)
-        loss.backward()
-
-        adv_img = image_tensor + self.primary_eps * image_tensor.grad.sign()
-        adv_img = torch.clamp(adv_img, -1, 1)
-
-        with torch.no_grad():
-            if defense:
-                adv_img = defense(adv_img)
-            adv_logits = self.model(adv_img)
-            adv_pred = adv_logits.argmax(dim=1)
-
-        robust_acc = float((adv_pred == pred).float().mean().item() * 100)
-        return robust_acc
-
-    def handle_uploaded_image(self, image_tensor):
-        decisions = []
-        start_time = time.time()
-
-        pred, conf, _ = self.classify_image(image_tensor)
-
-        record = {
-            "pred_class": pred,
-            "confidence": conf,
-            "timestamp": start_time
+        attack_scores = {
+            "FGSM": metrics["FGSM Accuracy"],
+            "PGD": metrics["PGD Accuracy"],
+            "BIM": metrics["BIM Accuracy"],
+            "CW": metrics["CW Accuracy"]
         }
 
-        # --- Confidence gate (KEEP THIS) ---
-        if conf < self.conf_threshold:
-            decisions.append((
-                "stop_low_confidence",
-                f"Low confidence ({conf:.2f}). Skipping robustness probes."
-            ))
-            record["decision"] = "stop_low_confidence"
-            return decisions, record
+        weakest_attack = min(
+            attack_scores,
+            key=attack_scores.get
+        )
 
-        # --- Defense selection ---
-        defense = SmoothingDefense(kernel_size=3) if self.config["use_defense"] else None
+        print("\nVulnerability Analysis:")
+        print("Weakest attack:", weakest_attack)
 
-        # --- PROBE MECHANISM ---
-        clean_pred, clean_conf, probe_results = self.run_probes(
-            image_tensor, defense)
+        return weakest_attack
+    # ------------------------------
+    # LOGGING
+    # ------------------------------
 
-        probe_analysis = self.analyze_probes(probe_results)
+    def log(self, text):
 
-        record["probe_results"] = probe_results
-        record["probe_analysis"] = probe_analysis
+        with open(self.log_file, "a", encoding="utf-8") as f:
 
-        # --- AGENT DECISION ---
-        if not probe_analysis["needs_retrain"]:
-            decisions.append((
-                "no_retrain",
-                "Probes show stable behavior across perturbations."
-            ))
-            record["decision"] = "no_retrain"
-            return decisions, record
+            f.write("\n")
+            f.write(str(datetime.now()) + "\n")
+            f.write(text + "\n")
 
-        # --- RETRAIN IF NEEDED ---
-        if self.train_loader is not None:
-            decisions.append((
-                "perform_retrain",
-                "Probe failures indicate model instability. Retraining triggered."
-            ))
+    # ------------------------------
+    # AGENT DECISION STEP
+    # ------------------------------
+    def evaluate_and_decide(self):
 
-            retrain_cfg = self.config["retrain_cfg"]
+        print("\nAgent running robustness evaluation...\n")
 
-            save_path, retrain_metrics = run_adversarial_retrain(
-                self.model,
-                self.train_loader,
-                self.device,
-                retrain_cfg,
-                defense=defense
-            )
+        # Always load latest model
+        self.model = self.load_latest_model()
 
-            self.model.load_state_dict(
-                torch.load(save_path, map_location=self.device)
-            )
+        metrics = run_full_evaluation(
+            self.model,
+            self.test_loader
+        )
+        print("Printing the metric keys:")
+        for key in metrics.keys():
+            print(key)
+        clean_acc = metrics["Clean Accuracy"]
+        worst_acc = metrics["Worst-case Accuracy"]
+        gap = metrics["Robustness Gap"]
+        weakest_attack = self.analyze_vulnerability(metrics)
+        print("Clean Accuracy:", clean_acc)
+        print("Worst-case Accuracy:", worst_acc)
+        print("Robustness Gap:", gap)
 
-            record["retrain_metrics"] = retrain_metrics
-            record["decision"] = "perform_retrain"
+        log_text = f"""
+Clean Accuracy: {clean_acc:.2f}
+Worst-case Accuracy: {worst_acc:.2f}
+Robustness Gap: {gap:.2f}
+"""
+
+        # ------------------------------
+        # DECISION
+        # ------------------------------
+        if gap > self.gap_threshold:
+
+            print("\n⚠ Robustness degradation detected.")
+            print("Agent triggering adversarial training...\n")
+
+            self.log(log_text + "\nThreshold exceeded → retraining triggered")
+
+            self.retrain_model(weakest_attack)
 
         else:
-            decisions.append((
-                "recommend_retrain",
-                "Probe failures detected, but no training data available."
-            ))
-            record["decision"] = "recommend_retrain"
 
-        return decisions, record
+            print("\nModel robustness acceptable. No retraining needed.")
 
-    def run_probes(self, image_tensor, defense):
-        probe_results = []
+            self.log(log_text + "\nNo retraining required")
 
-        self.model.eval()
+    # ------------------------------
+    # RETRAIN MODEL
+    # ------------------------------
+    def retrain_model(self, weakest_attack):
 
-        clean_pred, clean_conf, _ = self.classify_image(image_tensor)
-        label = torch.tensor([clean_pred], device=self.device)
+        print("\nAgent selecting defense strategy...")
 
-        # --- FGSM-style epsilon probes ---
-        for eps in self.config["eps_list"]:
-            self.primary_eps = eps
+        if weakest_attack == "PGD":
+            epochs = 5
+        else:
+            epochs = 3
 
-            adv_robust = self.evaluate_robustness(
-                image_tensor, defense)
+        self.model = train_with_trades(
+            self.model,
+            self.train_loader,
+            epochs=epochs
+        )
 
-            probe_results.append({
-                "type": "fgsm",
-                "epsilon": eps,
-                "robust_accuracy": adv_robust
-            })
+        new_model_name = self.get_next_model_version()
 
-        # --- C&W PROBE (NEW) ---
-        cw_success = self.cw_probe(image_tensor, label, defense)
+        save_path = os.path.join(
+            self.models_dir,
+            new_model_name
+        )
 
-        probe_results.append({
-            "type": "cw",
-            "epsilon": "adaptive",
-            "robust_accuracy": 100.0 if cw_success else 0.0
-        })
+        torch.save(self.model, save_path)
 
-        # --- BIM PROBE (NEW) ---
-        bim_success = self.bim_probe(image_tensor, label, defense)
+        print(f"\nNew model saved: {save_path}")
 
-        probe_results.append({
-            "type": "bim",
-            "epsilon": self.primary_eps,
-            "robust_accuracy": 100.0 if bim_success else 0.0
-        })
+        self.log(f"New model saved: {new_model_name}")
 
-        return clean_pred, clean_conf, probe_results
+    # ------------------------------
+    # RUN ONCE
+    # ------------------------------
+    def run_once(self):
 
-    def analyze_probes(self, probe_results):
-        """
-        Converts probe outcomes into a retraining signal
-        """
-        failures = 0
+        self.evaluate_and_decide()
 
-        for probe in probe_results:
-            if probe["robust_accuracy"] < 50.0:
-                failures += 1
+    # ------------------------------
+    # RUN PERIODICALLY
+    # ------------------------------
+    def run_periodic(self, interval_days=3):
 
-        failure_ratio = failures / len(probe_results)
+        seconds = interval_days * 24 * 60 * 60
 
-        return {
-            "failures": failures,
-            "failure_ratio": failure_ratio,
-            "needs_retrain": failure_ratio >= 0.5
-        }
+        while True:
 
+            self.evaluate_and_decide()
 
+            print(
+                f"\nAgent sleeping for {interval_days} days..."
+            )
+
+            time.sleep(seconds)
