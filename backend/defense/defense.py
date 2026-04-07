@@ -91,7 +91,7 @@ def trades_loss(
 # TRADES WRAPPER
 # ------------------------------
 class TRADESDefense:
-    def __init__(self, model, epsilon=8/255, alpha=2/255, steps=10, beta=6.0):
+    def __init__(self, model, epsilon=4/255, alpha=2/255, steps=10, beta=2.0):
         self.model = model
         self.epsilon = epsilon
         self.alpha = alpha

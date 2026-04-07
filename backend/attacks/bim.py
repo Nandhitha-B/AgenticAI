@@ -23,4 +23,4 @@ def bim_attack(model, images, labels, epsilon=0.03, alpha=0.01, iters=10, device
         eta = torch.clamp(adv_images - ori_images, min=-epsilon, max=epsilon)
         images = torch.clamp(ori_images + eta, 0, 1).detach()
 
-    return images
+    return adv_images

@@ -1,0 +1,2 @@
+Drag and drop or upload an MRI image,Predicted Tumor Class,Confidence Scores,timestamp
+.gradio\flagged\Drag and drop or upload an MRI image\31c4041235f0ff1376de\uploaded_image.png,glioma,"{""label"": ""glioma"", ""confidences"": [{""label"": ""glioma"", ""confidence"": 0.9759774208068848}, {""label"": ""meningioma"", ""confidence"": 0.023878786712884903}, {""label"": ""pituitary"", ""confidence"": 0.00014375108003150672}]}",2026-03-25 00:31:27.390417

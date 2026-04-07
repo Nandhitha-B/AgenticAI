@@ -3,12 +3,12 @@
 import torch
 import torch.nn.functional as F
 
-from attacks.fgsm import fgsm_attack
-from attacks.pgd import pgd_attack
-from attacks.bim import bim_attack
-from attacks.cw import cw_attack
+from backend.attacks.fgsm import fgsm_attack
+from backend.attacks.pgd import pgd_attack
+from backend.attacks.bim import bim_attack
+from backend.attacks.cw import cw_attack
 
-from evaluation.metrics import (
+from backend.evaluation.metrics import (
     compute_metrics,
     compute_attack_success_rate,
     compute_confidence_drop,

@@ -5,6 +5,7 @@ from datetime import datetime
 
 from evaluation.attack_eval import run_full_evaluation
 from defense.defense import train_with_trades
+from database.operations import save_model, save_metrics
 
 
 class RobustnessAgent:
@@ -27,7 +28,7 @@ class RobustnessAgent:
         self.device = device
 
         self.model = None
-
+        self.current_version = None
         os.makedirs(models_dir, exist_ok=True)
         os.makedirs("logs", exist_ok=True)
 
@@ -88,7 +89,7 @@ class RobustnessAgent:
 
         model.to(self.device)
         model.eval()
-
+        self.current_version = f"model_v{latest_version}"
         return model
 
     # ------------------------------
@@ -145,6 +146,19 @@ class RobustnessAgent:
         worst_acc = metrics["Worst-case Accuracy"]
         gap = metrics["Robustness Gap"]
         weakest_attack = self.analyze_vulnerability(metrics)
+        # ------------------------------
+        # SAVE METRICS TO DATABASE
+        # ------------------------------
+        save_metrics(
+            model_version=self.current_version,   # use the current model version
+            metrics_dict={
+                "clean": clean_acc,
+                "fgsm": metrics["FGSM Accuracy"],
+                "pgd": metrics["PGD Accuracy"],
+                "bim": metrics["BIM Accuracy"],
+                "cw": metrics["CW Accuracy"]
+            }
+        )
         print("Clean Accuracy:", clean_acc)
         print("Worst-case Accuracy:", worst_acc)
         print("Robustness Gap:", gap)
@@ -158,7 +172,7 @@ Robustness Gap: {gap:.2f}
         # ------------------------------
         # DECISION
         # ------------------------------
-        if gap > self.gap_threshold:
+        if gap > self.gap_threshold and worst_acc < clean_acc:
 
             print("\n⚠ Robustness degradation detected.")
             print("Agent triggering adversarial training...\n")
@@ -199,7 +213,16 @@ Robustness Gap: {gap:.2f}
         )
 
         torch.save(self.model, save_path)
-
+        # ------------------------------
+        # SAVE MODEL INFO TO DATABASE
+        # ------------------------------
+        save_model(
+            version=new_model_name,
+            path=save_path,
+            clean_acc=0,
+            worst_acc=0,
+            gap=0
+        )
         print(f"\nNew model saved: {save_path}")
 
         self.log(f"New model saved: {new_model_name}")

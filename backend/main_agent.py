@@ -37,10 +37,10 @@ test_dataset = datasets.ImageFolder(
 
 
 # --------------------------------
-# OPTIONAL: SMALL SUBSET FOR FAST EVALUATION
+#  SMALL SUBSET FOR FAST EVALUATION
 # --------------------------------
 
-subset_size = 200
+subset_size = 250
 
 test_subset = Subset(
     test_dataset,
@@ -86,9 +86,9 @@ agent = RobustnessAgent(
 # CHOOSE EXECUTION MODE
 # --------------------------------
 
-MODE = "once"          # options: "once" or "periodic"
+MODE = "once"
 
-INTERVAL_DAYS = 3      # used only in periodic mode
+INTERVAL_DAYS = 3
 
 
 # --------------------------------
