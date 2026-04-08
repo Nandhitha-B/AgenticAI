@@ -9,6 +9,7 @@ from backend.database.operations import save_image
 import time
 import matplotlib.pyplot as plt
 from backend.database.visualization import (
+    DB_PATH,
     plot_gap_trend,
     plot_accuracy_trends,
     plot_worst_case,
@@ -16,6 +17,8 @@ from backend.database.visualization import (
 )
 # Set device
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+print("Starting frontend app...")
 
 
 def load_latest_model():
@@ -53,7 +56,8 @@ def get_latest_status():
 
 
 def get_metrics_data():
-    conn = sqlite3.connect("backend/database/app.db")
+    DB_PATH = os.path.join(os.getcwd(), "backend", "database", "app.db")
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
     cursor.execute("""
@@ -88,8 +92,9 @@ def plot_metrics():
     plt.plot(versions, pgd, label="PGD")
     plt.legend()
     plt.title("Performance Over Time")
+    fig = plt.gcf()
+    return fig
 
-    return plt
 # Load the model
 # Using the path confirmed in the saved_model directory
 
@@ -255,7 +260,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
-
+    print("Launching Gradio...")
     demo.launch(
         server_name="0.0.0.0",
         server_port=port
