@@ -1,4 +1,4 @@
-import matplotlib
+import matplotlib.pyplot as plt
 import gradio as gr
 import torch
 import torch.nn.functional as F
@@ -6,22 +6,15 @@ from torchvision import transforms
 from PIL import Image
 import os
 import sqlite3
-from backend.database.operations import save_image
 import time
-import matplotlib.pyplot as plt
-import socket
-from backend.database.visualization import (
-    DB_PATH,
-    plot_gap_trend,
-    plot_accuracy_trends,
-    plot_worst_case,
-    get_model_table
-)
+
+import matplotlib
+matplotlib.use("Agg")
+
 # Set device
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 print("Starting frontend app...")
-matplotlib.use("Agg")
 
 
 def load_latest_model():
@@ -118,7 +111,7 @@ def predict(img):
 
     if model is None:
         return "Model not found", {}, "No model", "No data"
-
+    from backend.database.operations import save_image
     # Preprocess image
     img = Image.fromarray(img).convert('RGB')
     img_tensor = test_transforms(img).unsqueeze(0).to(device)
@@ -146,6 +139,11 @@ def predict(img):
         confidence=float(torch.max(probs))
     )
     return prediction, results, model_version, get_latest_status()
+
+
+def load_table():
+    from backend.database.visualization import get_model_table
+    return get_model_table()
 
 
 # -----------------------------
@@ -215,6 +213,13 @@ with gr.Blocks() as demo:
         worst_plot = gr.Plot(label="Worst-case Accuracy")
 
         def load_all_plots():
+            from backend.database.visualization import (
+                DB_PATH,
+                plot_gap_trend,
+                plot_accuracy_trends,
+                plot_worst_case,
+                get_model_table
+            )
             return (
                 plot_gap_trend(),
                 plot_accuracy_trends(),
@@ -239,7 +244,7 @@ with gr.Blocks() as demo:
         table_btn = gr.Button("Load Model Data")
 
         table_btn.click(
-            fn=get_model_table,
+            fn=load_table,
             inputs=[],
             outputs=table_output
         )
@@ -262,18 +267,11 @@ with gr.Blocks() as demo:
         )
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 7860))
+    port = int(os.environ.get("PORT", 8080))
 
     print("About to launch Gradio on port:", port)
 
-    s = socket.socket()
-    s.bind(("0.0.0.0", port))
-    s.close()
-
     demo.launch(
         server_name="0.0.0.0",
-        server_port=port,
-        theme=gr.themes.Soft(),
-        share=False,
-        prevent_thread_lock=False
+        server_port=port
     )
