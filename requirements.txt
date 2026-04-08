@@ -4,4 +4,5 @@ gradio
 pandas
 plotly
 scikit-learn
+matplotlib
 Pillow
