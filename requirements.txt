@@ -1,0 +1,7 @@
+torch
+torchvision
+gradio
+pandas
+plotly
+scikit-learn
+Pillow
