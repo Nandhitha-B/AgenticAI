@@ -1,3 +1,4 @@
+import matplotlib
 import gradio as gr
 import torch
 import torch.nn.functional as F
@@ -8,6 +9,7 @@ import sqlite3
 from backend.database.operations import save_image
 import time
 import matplotlib.pyplot as plt
+import socket
 from backend.database.visualization import (
     DB_PATH,
     plot_gap_trend,
@@ -19,6 +21,7 @@ from backend.database.visualization import (
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 print("Starting frontend app...")
+matplotlib.use("Agg")
 
 
 def load_latest_model():
@@ -148,7 +151,7 @@ def predict(img):
 # -----------------------------
 # Create Gradio Interface (UPGRADED)
 # -----------------------------
-with gr.Blocks(theme=gr.themes.Soft()) as demo:
+with gr.Blocks() as demo:
 
     gr.Markdown("# 🧠 Agentic AI Tumor Classification System")
     gr.Markdown(
@@ -260,8 +263,17 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
-    print("Launching Gradio...")
+
+    print("About to launch Gradio on port:", port)
+
+    s = socket.socket()
+    s.bind(("0.0.0.0", port))
+    s.close()
+
     demo.launch(
         server_name="0.0.0.0",
-        server_port=port
+        server_port=port,
+        theme=gr.themes.Soft(),
+        share=False,
+        prevent_thread_lock=False
     )
