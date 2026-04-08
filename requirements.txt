@@ -6,3 +6,5 @@ plotly
 scikit-learn
 matplotlib
 Pillow
+fastapi
+uvicorn

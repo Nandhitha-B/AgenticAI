@@ -1,3 +1,6 @@
+import uvicorn
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI
 import matplotlib.pyplot as plt
 import gradio as gr
 import torch
@@ -10,7 +13,6 @@ import time
 
 import matplotlib
 matplotlib.use("Agg")
-
 # Set device
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -266,12 +268,27 @@ with gr.Blocks() as demo:
             outputs=log_output
         )
 
+# -----------------------------
+# FASTAPI WRAPPER
+# -----------------------------
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app = gr.mount_gradio_app(app, demo, path="/")
+
+
+# -----------------------------
+# ENTRY POINT
+# -----------------------------
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
+    port = int(os.environ.get("PORT", 10000))
+    print(f"Starting server on port {port}...")
 
-    print("About to launch Gradio on port:", port)
-
-    demo.launch(
-        server_name="0.0.0.0",
-        server_port=port
-    )
+    uvicorn.run(app, host="0.0.0.0", port=port)
