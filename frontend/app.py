@@ -1,7 +1,6 @@
 import uvicorn
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI
-import matplotlib.pyplot as plt
 import gradio as gr
 import torch
 import torch.nn.functional as F
@@ -14,31 +13,42 @@ import time
 import matplotlib
 matplotlib.use("Agg")
 # Set device
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+device = 'cpu'
 
 print("Starting frontend app...")
 
+torch.set_grad_enabled(False)
+MODEL = None
+MODEL_VERSION = None
+
 
 def load_latest_model():
+    global MODEL, MODEL_VERSION
+
+    if MODEL is not None:
+        return MODEL, MODEL_VERSION
+
     models_dir = "models"
 
     models = [
         f for f in os.listdir(models_dir)
-        if f.startswith("model_v") and f.endswith(".pth")
+        if f.startswith("model_v")
     ]
 
-    if len(models) == 0:
-        return None
+    if not models:
+        return None, "No model"
 
-    versions = [int(m.split("_v")[1].split(".")[0]) for m in models]
-    latest_version = max(versions)
+    latest = max([int(m.split("_v")[1].split(".")[0]) for m in models])
+    path = os.path.join(models_dir, f"model_v{latest}.pth")
 
-    model_path = os.path.join(models_dir, f"model_v{latest_version}.pth")
+    print("Loading model ONCE...")
 
-    model = torch.load(model_path, map_location=device, weights_only=False)
-    model.to(device).eval()
+    MODEL = torch.load(path, map_location=device, weights_only=False)
+    MODEL.to(device).eval()
 
-    return model, f"model_v{latest_version}"
+    MODEL_VERSION = f"model_v{latest}"
+
+    return MODEL, MODEL_VERSION
 
 
 def get_latest_status():
@@ -69,28 +79,26 @@ def get_metrics_data():
 
 
 def plot_metrics():
+    import matplotlib.pyplot as plt
+
+    plt.close('all')  # 🔥 VERY IMPORTANT
 
     data = get_metrics_data()
 
-    versions = []
-    clean = []
-    pgd = []
+    versions, clean, pgd = [], [], []
 
-    for row in data:
-        version, attack, acc = row
-
+    for version, attack, acc in data:
         if attack == "clean":
             versions.append(version)
             clean.append(acc)
         elif attack == "pgd":
             pgd.append(acc)
 
-    plt.figure()
+    fig = plt.figure()
     plt.plot(versions, clean, label="Clean")
     plt.plot(versions, pgd, label="PGD")
     plt.legend()
-    plt.title("Performance Over Time")
-    fig = plt.gcf()
+
     return fig
 
 # Load the model
@@ -140,6 +148,8 @@ def predict(img):
         prediction=prediction,
         confidence=float(torch.max(probs))
     )
+    del img_tensor, outputs, probs
+    torch.cuda.empty_cache()
     return prediction, results, model_version, get_latest_status()
 
 
@@ -228,10 +238,37 @@ with gr.Blocks() as demo:
                 plot_worst_case()
             )
 
+        plot_type = gr.Radio(
+            ["Gap", "Accuracy", "Worst"],
+            label="Select Plot Type"
+        )
+
+        def load_selected_plot(choice):
+            from backend.database.visualization import (
+                plot_gap_trend,
+                plot_accuracy_trends,
+                plot_worst_case
+            )
+
+            try:
+                if choice == "Gap":
+                    return plot_gap_trend()
+                elif choice == "Accuracy":
+                    return plot_accuracy_trends()
+                else:
+                    return plot_worst_case()
+            except Exception as e:
+                print("Plot error:", e)
+                import matplotlib.pyplot as plt
+                plt.close('all')
+                fig = plt.figure()
+                plt.text(0.5, 0.5, str(e), ha='center')
+                return fig
+
         refresh_btn.click(
-            fn=load_all_plots,
-            inputs=[],
-            outputs=[gap_plot, acc_plot, worst_plot]
+            fn=load_selected_plot,
+            inputs=plot_type,
+            outputs=gap_plot
         )
 
     # =====================================
