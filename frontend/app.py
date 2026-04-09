@@ -288,6 +288,9 @@ app = gr.mount_gradio_app(app, demo, path="/")
 # ENTRY POINT
 # -----------------------------
 if __name__ == "__main__":
+    from backend.database.init_db import create_tables
+
+    create_tables()
     port = int(os.environ.get("PORT", 10000))
     print(f"Starting server on port {port}...")
 
